@@ -17,6 +17,9 @@
 #ifdef USE_SDL_GPU
 #include "d3drmrenderer_sdl3gpu.h"
 #endif
+#ifdef USE_RTX
+#include "d3drmrenderer_rtx.h"
+#endif
 #ifdef USE_SOFTWARE_RENDER
 #include "d3drmrenderer_software.h"
 #endif
@@ -61,6 +64,9 @@ void Miniwin_SetupWindowCreateProperties(SDL_PropertiesID props)
 	SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 	SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
 #endif
+#ifdef USE_RTX
+	SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_VULKAN_BOOLEAN, true);
+#endif
 }
 
 Direct3DRMRenderer* CreateDirect3DRMRenderer(
@@ -69,6 +75,11 @@ Direct3DRMRenderer* CreateDirect3DRMRenderer(
 	const GUID* guid
 )
 {
+#ifdef USE_RTX
+	if (SDL_memcmp(guid, &RTX_GUID, sizeof(GUID)) == 0) {
+		return Direct3DRMRTXRenderer::Create(DDSDesc.dwWidth, DDSDesc.dwHeight);
+	}
+#endif
 #ifdef USE_SDL_GPU
 	if (SDL_memcmp(guid, &SDL3_GPU_GUID, sizeof(GUID)) == 0) {
 		return Direct3DRMSDL3GPURenderer::Create(DDSDesc.dwWidth, DDSDesc.dwHeight);
@@ -135,6 +146,10 @@ Direct3DRMRenderer* CreateDirect3DRMRenderer(
 
 void Direct3DRMRenderer_EnumDevices(const IDirect3DMiniwin* d3d, LPD3DENUMDEVICESCALLBACK cb, void* ctx)
 {
+#ifdef USE_RTX
+	// Enumerated first so it becomes the default device when available.
+	Direct3DRMRTX_EnumDevice(cb, ctx);
+#endif
 #ifdef USE_SDL_GPU
 	Direct3DRMSDL3GPU_EnumDevice(cb, ctx);
 #endif

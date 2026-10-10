@@ -29,6 +29,7 @@ target_compile_definitions(miniwin PRIVATE
 
 option(ISLE_RENDERER_SOFTWARE "Build the software (SDL_Renderer) backend" ON)
 option(ISLE_RENDERER_SDLGPU "Build the SDL GPU backend" ON)
+option(ISLE_RENDERER_RTX "Build the Vulkan RTX (ray tracing) backend" ON)
 if(ISLE_RENDERER_SOFTWARE)
   list(APPEND GRAPHICS_BACKENDS USE_SOFTWARE_RENDER)
 endif()
@@ -142,6 +143,80 @@ if(WIN32 AND NOT WINDOWS_STORE)
   )
   target_link_libraries(miniwin PRIVATE d3d9)
   list(APPEND GRAPHICS_BACKENDS USE_DIRECTX9)
+endif()
+
+# Vulkan RTX backend (hardware ray tracing via VK_KHR_ray_query +
+# VK_KHR_acceleration_structure; falls back to a PBR raster path on devices
+# without ray query support, e.g. MoltenVK on macOS).
+if(ISLE_RENDERER_RTX AND NOT (DOS OR EMSCRIPTEN OR NINTENDO_3DS OR NINTENDO_SWITCH OR VITA OR WINDOWS_STORE))
+  find_package(Vulkan)
+  find_program(ISLE_GLSLANG NAMES glslangValidator)
+  find_program(ISLE_GLSLC NAMES glslc)
+  if(Vulkan_FOUND AND (ISLE_GLSLANG OR ISLE_GLSLC) AND TARGET Python3::Interpreter)
+    message(STATUS "Enabling Vulkan RTX renderer")
+    set(ISLE_RTX_ENABLED TRUE PARENT_SCOPE)
+    list(APPEND GRAPHICS_BACKENDS USE_RTX)
+    target_sources(miniwin PRIVATE src/d3drm/backends/rtx/renderer.cpp)
+    target_link_libraries(miniwin PRIVATE Vulkan::Vulkan)
+
+    set(rtx_shader_src "${CMAKE_CURRENT_SOURCE_DIR}/src/d3drm/backends/rtx/shaders/src")
+    set(rtx_shader_out "${CMAKE_CURRENT_BINARY_DIR}/rtx_shaders")
+    set(rtx_genspirv "${CMAKE_CURRENT_SOURCE_DIR}/src/d3drm/backends/rtx/shaders/genspirv.py")
+
+    # output-name | stage | source-file | extra-define
+    set(rtx_shader_list
+      "scene.vert|vert|scene.vert.glsl|-"
+      "scene.frag|frag|scene.frag.glsl|-"
+      "scene_rt.frag|frag|scene.frag.glsl|RTX_RT"
+      "ui.vert|vert|ui.vert.glsl|-"
+      "ui.frag|frag|ui.frag.glsl|-"
+      "post.vert|vert|post.vert.glsl|-"
+      "post.frag|frag|post.frag.glsl|-"
+    )
+    foreach(entry IN LISTS rtx_shader_list)
+      string(REPLACE "|" ";" parts "${entry}")
+      list(GET parts 0 shader_name)
+      list(GET parts 1 shader_stage)
+      list(GET parts 2 shader_file)
+      list(GET parts 3 shader_define)
+      string(REPLACE "." "_" shader_var "${shader_name}")
+      set(spv "${rtx_shader_out}/${shader_name}.spv")
+      set(hdr "${rtx_shader_out}/shaders/generated/${shader_name}.h")
+      set(define_args)
+      if(NOT shader_define STREQUAL "-")
+        set(define_args "-D${shader_define}")
+      endif()
+      if(ISLE_GLSLANG)
+        set(compile_cmd "${ISLE_GLSLANG}" -V --target-env vulkan1.2 -S ${shader_stage}
+          "-I${rtx_shader_src}" ${define_args}
+          -o "${spv}" "${rtx_shader_src}/${shader_file}")
+      else()
+        set(compile_cmd "${ISLE_GLSLC}" --target-env=vulkan1.2 -fshader-stage=${shader_stage}
+          "-I${rtx_shader_src}" ${define_args}
+          -o "${spv}" "${rtx_shader_src}/${shader_file}")
+      endif()
+      add_custom_command(
+        OUTPUT "${spv}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${rtx_shader_out}"
+        COMMAND ${compile_cmd}
+        DEPENDS "${rtx_shader_src}/${shader_file}" "${rtx_shader_src}/common.glsl"
+        COMMENT "Compiling RTX shader ${shader_name}.glsl"
+        VERBATIM
+      )
+      add_custom_command(
+        OUTPUT "${hdr}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${rtx_shader_out}/shaders/generated"
+        COMMAND "${Python3_EXECUTABLE}" "${rtx_genspirv}" --input "${spv}" --output "${hdr}" --variable "${shader_var}_spv"
+        DEPENDS "${spv}" "${rtx_genspirv}"
+        COMMENT "Embedding RTX shader ${shader_name}"
+        VERBATIM
+      )
+      target_sources(miniwin PRIVATE "${hdr}")
+    endforeach()
+    target_include_directories(miniwin PRIVATE "${rtx_shader_out}")
+  else()
+    message(STATUS "RTX renderer disabled: Vulkan SDK, a GLSL compiler (glslangValidator/glslc) or Python 3.12+ was not found")
+  endif()
 endif()
 
 if(WINDOWS_STORE)
