@@ -875,6 +875,18 @@ if (ISLE_BUILD_APP)
   endif()
 endif()
 
+# RTX backend smoke test (renders a test scene through the real renderer
+# interface and validates the framebuffer readback).
+if (ISLE_RTX_ENABLED AND ISLE_BUILD_APP AND NOT WIN32 AND NOT APPLE)
+  find_package(Vulkan REQUIRED)
+  add_executable(isle-rtxtest tools/rtxtest/rtxtest.cpp)
+  target_link_libraries(isle-rtxtest PRIVATE miniwin SDL3::SDL3 Vulkan::Vulkan)
+  target_include_directories(isle-rtxtest PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/miniwin/src/internal"
+  )
+  list(APPEND isle_targets isle-rtxtest)
+endif()
+
 if (ISLE_BUILD_CONFIG)
   # Prefer MSYS2's static Qt6 when available so isle-config does not depend on Qt DLLs.
   # Restrict library resolution to static archives while Qt and its third-party
